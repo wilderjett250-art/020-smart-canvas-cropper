@@ -1,0 +1,42 @@
+SmartCanvasCropper v1.8.1 - Third-Party Notices
+
+This package contains or downloads open-source components. Their original
+copyright notices and license terms remain applicable.
+
+1. Ultralytics YOLO / YOLO-World integration
+   Source: https://github.com/ultralytics/ultralytics
+   License: GNU Affero General Public License v3.0 (AGPL-3.0), or an
+   Ultralytics Enterprise License obtained from Ultralytics.
+   License information: https://www.ultralytics.com/license
+   The application source used by this package is included in the app folder.
+
+2. YOLO-World research model
+   Original source: https://github.com/AILab-CVC/YOLO-World
+   License declared by the original repository: GNU General Public License v3.0.
+   Packaged primary weight: yolov8l-worldv2-canvas.pt
+   Packaged recovery weight: yolov8s-worldv2-canvas.pt
+
+3. MobileSAM
+   Source: https://github.com/ChaoningZhang/MobileSAM
+   License: Apache License 2.0.
+   Packaged weight: mobile_sam.pt
+
+4. Ultralytics CLIP fork (build-time text feature generation)
+   Source: https://github.com/ultralytics/CLIP
+   Source revision used: c4b6ea0932a2c0f39a0fa528af5ec4982ff15cab
+   License: GNU Affero General Public License v3.0.
+   CLIP source and its separate model weight are not included in this package;
+   the packaged detector already contains the required canvas text features.
+
+5. Runtime components bundled or downloaded for the selected backend
+   Python 3.11.9 portable base: https://www.python.org/ (PSF License)
+   PyTorch / torchvision: https://pytorch.org/ (BSD-style license)
+   torch-directml / DirectML: https://github.com/microsoft/DirectML
+   OpenCV: https://opencv.org/ (Apache License 2.0)
+   Pillow: https://python-pillow.org/ (HPND License)
+   Other Python dependencies retain the license metadata distributed in their
+   installed package directories.
+
+For closed-source commercial distribution involving Ultralytics components,
+review the current Ultralytics licensing terms and obtain the appropriate
+commercial license when required.
