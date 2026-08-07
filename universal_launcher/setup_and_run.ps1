@@ -18,7 +18,7 @@
 
 .PARAMETER LocalRoot
     Optional local cache root. The default is
-    %LOCALAPPDATA%\SmartCanvasCropper\v1.8.
+    %LOCALAPPDATA%\SmartCanvasCropper\v1.9.2.
 
 .PARAMETER ForceReinstall
     Rebuild the selected GPU runtime. The existing runtime is renamed as a
@@ -46,8 +46,8 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-$script:ProductVersion = '1.8.1'
-$script:RuntimeSchema = 'portable-py3119-cuda271-dml241-cpu271-ultralytics8437-r5'
+$script:ProductVersion = '1.9.2'
+$script:RuntimeSchema = 'portable-py3119-cuda271-dml241-cpu271-ultralytics8437-r6'
 $script:PrimaryDetectorSha256 = '946E70DE8D586E84F1BB98CAAB8C094E3A8CF501E4807888166299439A67CBA3'
 $script:RecoveryDetectorSha256 = '9915A40C0AF95E45B38FAB9A20678E7A089914959205239A713A34958599455B'
 $script:SegmenterSha256 = '6DBB90523A35330FEDD7F1D3DFC66F995213D81B29A5CA8108DBCDD4E37D6C2F'
@@ -78,7 +78,7 @@ if ([string]::IsNullOrWhiteSpace($LocalRoot)) {
         $LocalRoot = [Environment]::ExpandEnvironmentVariables($env:SMART_CROPPER_LOCAL_ROOT.Trim())
     }
     else {
-        $LocalRoot = Join-Path $env:LOCALAPPDATA 'SmartCanvasCropper\v1.8'
+        $LocalRoot = Join-Path $env:LOCALAPPDATA 'SmartCanvasCropper\v1.9.2'
     }
 }
 $script:LocalRoot = [IO.Path]::GetFullPath($LocalRoot)
@@ -422,7 +422,7 @@ function Assert-FreeSpace([string]$RuntimeMode) {
 
 function Get-RuntimeValidationCode([string]$RuntimeMode) {
     $expectedDevice = if ($RuntimeMode -eq 'nvidia') { 'cuda' } elseif ($RuntimeMode -eq 'directml') { 'privateuseone' } else { 'cpu' }
-    return "import os,sys,torch,cv2,PIL,ultralytics; sys.stderr=None; os.environ['SMART_CROPPER_RUNTIME_MODE']='$RuntimeMode'; import smart_canvas_cropper as app; from ultralytics import YOLO,SAM; d,label=app.choose_compute_device(); v=torch.ones(1).to(d).cpu(); root=os.environ['SMART_CROPPER_MODEL_DIR']; primary=YOLO(os.path.join(root,'yolov8l-worldv2-canvas.pt')); recovery=YOLO(os.path.join(root,'yolov8s-worldv2-canvas.pt')); seg=SAM(os.path.join(root,'mobile_sam.pt')); assert getattr(primary.model,'txt_feats',None) is not None; assert getattr(recovery.model,'txt_feats',None) is not None; actual=str(d); print('python='+sys.version.split()[0]); print('torch='+torch.__version__); print('device='+actual); print('label='+label); print('opencv='+cv2.__version__); print('ultralytics='+ultralytics.__version__); print('models=preloaded'); ok=(actual.startswith('$expectedDevice') and float(v[0])==1.0); raise SystemExit(0 if ok else 4)"
+    return "import os,sys,torch,cv2,PIL,ultralytics; sys.stderr=None; os.environ['SMART_CROPPER_RUNTIME_MODE']='$RuntimeMode'; import smart_canvas_cropper as app; from ultralytics import YOLO,SAM; d,label=app.choose_compute_device(); tensor_device='cuda:0' if d==0 else d; v=torch.ones(1).to(tensor_device).cpu(); root=os.environ['SMART_CROPPER_MODEL_DIR']; primary=YOLO(os.path.join(root,'yolov8l-worldv2-canvas.pt')); recovery=YOLO(os.path.join(root,'yolov8s-worldv2-canvas.pt')); seg=SAM(os.path.join(root,'mobile_sam.pt')); assert getattr(primary.model,'txt_feats',None) is not None; assert getattr(recovery.model,'txt_feats',None) is not None; actual=str(tensor_device); print('python='+sys.version.split()[0]); print('torch='+torch.__version__); print('device='+actual); print('label='+label); print('opencv='+cv2.__version__); print('ultralytics='+ultralytics.__version__); print('models=preloaded'); ok=(actual.startswith('$expectedDevice') and float(v[0])==1.0); raise SystemExit(0 if ok else 4)"
 }
 
 function Test-Runtime([string]$RuntimeMode, [switch]$Quiet) {
@@ -453,6 +453,18 @@ function Prepare-Runtime([string]$RuntimeMode) {
     if (-not $ForceReinstall -and (Test-Runtime $RuntimeMode)) {
         Write-Okay ('复用已验证环境：' + $runtimeRoot)
         return $RuntimeMode
+    }
+
+    $existingPython = Join-Path $runtimeRoot 'python.exe'
+    if (-not $ForceReinstall -and (Test-Path -LiteralPath $existingPython)) {
+        Write-Host ('发现未写入就绪标记的现有环境，正在先验证并恢复：' + $runtimeRoot)
+        if (Test-RuntimeWithoutMarker $RuntimeMode $existingPython) {
+            [IO.File]::WriteAllText((Get-MarkerPath $RuntimeMode), (Get-ExpectedMarker $RuntimeMode), (New-Object Text.UTF8Encoding($false)))
+            if (-not (Test-Runtime $RuntimeMode -Quiet)) { throw ($RuntimeMode + ' 恢复后的缓存验证失败。') }
+            Write-Okay ('现有环境验证通过并已恢复就绪标记：' + $runtimeRoot)
+            return $RuntimeMode
+        }
+        Write-WarningLine ($RuntimeMode + ' 现有环境未通过验证，将重新构建。')
     }
 
     if (Test-Path -LiteralPath $runtimeRoot) {

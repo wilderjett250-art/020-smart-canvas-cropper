@@ -1,4 +1,4 @@
-SmartCanvasCropper v1.8.1 - Third-Party Notices
+SmartCanvasCropper v1.9.2 - Third-Party Notices
 
 This package contains or downloads open-source components. Their original
 copyright notices and license terms remain applicable.

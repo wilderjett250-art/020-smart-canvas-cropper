@@ -1,8 +1,8 @@
 """Local zero-training cropper for photos that contain a canvas or poster.
 
-The tool uses a pre-trained YOLO-World model to make a first selection.  The
-four corner handles remain editable because product photos can include phones,
-shadows, glare, and partially hidden canvas edges.
+The tool uses pre-trained YOLO-World and MobileSAM models, then applies a
+locked, benchmarked geometry pipeline so end users do not need to tune expert
+parameters or move corner handles.
 """
 
 from __future__ import annotations
@@ -33,6 +33,8 @@ ROOT = Path(
         _DEFAULT_MODEL_ROOT if _DEFAULT_MODEL_ROOT.is_dir() else _PROJECT_ROOT,
     )
 ).resolve()
+APP_VERSION = "1.9.2"
+EDGE_TRIM_PERCENT = 0.8
 WEIGHTS = ROOT / "yolov8l-worldv2-canvas.pt"
 RECOVERY_WEIGHTS = ROOT / "yolov8s-worldv2-canvas.pt"
 SEGMENT_WEIGHTS = ROOT / "mobile_sam.pt"
@@ -43,12 +45,8 @@ DETECTOR_CLASSES = [
 CANVAS_SIZE = (820, 650)
 PREVIEW_SIZE = (360, 500)
 RUNTIME_MODE = os.environ.get("SMART_CROPPER_RUNTIME_MODE", "auto").strip().lower()
-SEGMENT_CACHE_POLICY = os.environ.get(
-    "SMART_CROPPER_SEGMENT_CACHE_POLICY", "reset"
-).strip().lower()
-SEGMENT_REFINEMENT_MODE = os.environ.get(
-    "SMART_CROPPER_SEGMENT_REFINEMENT_MODE", "ranked"
-).strip().lower()
+SEGMENT_CACHE_POLICY = "reset"
+SEGMENT_REFINEMENT_MODE = "ranked"
 _DIRECTML_PATCHED = False
 
 
@@ -64,7 +62,7 @@ def _create_app_logger() -> tuple[logging.Logger, Path | None]:
         log_dir = Path(configured)
     else:
         local_data = Path(os.environ.get("LOCALAPPDATA", Path.home()))
-        log_dir = local_data / "SmartCanvasCropper" / "v1.8" / "logs"
+        log_dir = local_data / "SmartCanvasCropper" / f"v{APP_VERSION}" / "logs"
     try:
         log_dir.mkdir(parents=True, exist_ok=True)
         log_path = log_dir / f"app-{datetime.now():%Y%m%d}.log"
@@ -341,7 +339,7 @@ def mask_to_quad(polygon: np.ndarray, expected_area: float) -> np.ndarray | None
 class SmartCropper(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
-        self.title("画布与海报智能裁图")
+        self.title(f"画布与海报智能裁图 {APP_VERSION} 正式版")
         self.minsize(1240, 760)
         self.configure(bg="#f4f6f8")
         self.model = None
@@ -360,14 +358,13 @@ class SmartCropper(tk.Tk):
         self.raw_preview: np.ndarray | None = None
         self.display_scale = 1.0
         self.display_offset = (0, 0)
-        self.active_corner: int | None = None
+        self.detection_ready = False
         self.canvas_photo: ImageTk.PhotoImage | None = None
         self.preview_photo: ImageTk.PhotoImage | None = None
         self.last_detection_mode = ""
         self.last_detection_review_reason = ""
         self.status = tk.StringVar(value="请选择一张包含画布、海报或装裱照片的场景图。")
         self.result_info = tk.StringVar(value="裁切后会在这里显示横竖方向与宽高比。")
-        self.edge_trim = tk.StringVar(value="0.8")
         self.aspect_ratio = tk.StringVar(value="不设置")
         self.compute_label_var = tk.StringVar(value=f"当前推理：{self.compute_label}。")
         self._build_ui()
@@ -382,15 +379,9 @@ class SmartCropper(tk.Tk):
         self.select_button.pack(side="left")
         self.auto_button = ttk.Button(toolbar, text="自动定位画布", command=self.auto_locate)
         self.auto_button.pack(side="left", padx=(8, 0))
-        self.export_button = ttk.Button(toolbar, text="导出裁切图", command=self.export)
+        self.export_button = ttk.Button(toolbar, text="导出裁切图", command=self.export, state="disabled")
         self.export_button.pack(side="left", padx=(8, 0))
-        ttk.Label(toolbar, text="边缘净化").pack(side="left", padx=(20, 4))
-        trim = ttk.Spinbox(toolbar, from_=0, to=10, increment=0.2, width=5, textvariable=self.edge_trim, command=self.redraw)
-        trim.pack(side="left")
-        ttk.Label(toolbar, text="%", foreground="#4b5563").pack(side="left", padx=(3, 0))
-        trim.bind("<Return>", lambda _event: self.redraw())
-        trim.bind("<FocusOut>", lambda _event: self.redraw())
-        ttk.Label(toolbar, text="输出比例").pack(side="left", padx=(16, 4))
+        ttk.Label(toolbar, text="输出比例").pack(side="left", padx=(20, 4))
         ratio_box = ttk.Combobox(
             toolbar,
             textvariable=self.aspect_ratio,
@@ -407,16 +398,13 @@ class SmartCropper(tk.Tk):
         self.batch_button.pack(side="left", padx=(12, 0))
         body = ttk.Frame(self, padding=(16, 0, 16, 12))
         body.pack(fill="both", expand=True)
-        left = ttk.Labelframe(body, text="原图与四角定位", padding=8)
+        left = ttk.Labelframe(body, text="原图与自动定位边界", padding=8)
         left.pack(side="left", fill="both", expand=True)
         right = ttk.Labelframe(body, text="透视校正后的裁切结果", padding=8)
         right.pack(side="left", fill="both", padx=(12, 0))
 
         self.image_canvas = tk.Canvas(left, width=CANVAS_SIZE[0], height=CANVAS_SIZE[1], bg="#1f2937", highlightthickness=0)
         self.image_canvas.pack(fill="both", expand=True)
-        self.image_canvas.bind("<Button-1>", self.on_pointer_down)
-        self.image_canvas.bind("<B1-Motion>", self.on_pointer_move)
-        self.image_canvas.bind("<ButtonRelease-1>", lambda _event: setattr(self, "active_corner", None))
         self.result_label = ttk.Label(right, anchor="center")
         self.result_label.pack(fill="both", expand=True)
         ttk.Label(right, textvariable=self.result_info, justify="center", foreground="#374151").pack(fill="x", pady=(10, 0))
@@ -455,6 +443,7 @@ class SmartCropper(tk.Tk):
                 elif event == "auto_done":
                     self._handle_auto_done(payload)
                 elif event == "auto_error":
+                    self.detection_ready = False
                     self._finish_processing()
                     LOGGER.error("auto_locate_failed error=%s", payload)
                     messagebox.showerror(
@@ -487,7 +476,7 @@ class SmartCropper(tk.Tk):
         state = "disabled" if active else "normal"
         self.select_button.configure(state=state)
         self.auto_button.configure(state=state)
-        self.export_button.configure(state=state)
+        self.export_button.configure(state="disabled" if active or not self.detection_ready else "normal")
         self.batch_button.configure(state=state)
         if active:
             self.activity_bar.start(12)
@@ -536,7 +525,9 @@ class SmartCropper(tk.Tk):
         self.image_path, self.original = Path(path), image
         h, w = image.shape[:2]
         self.corners = np.array([[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]], dtype=np.float32)
-        self.status.set("图片已加载。点击“自动定位画布”，或直接拖动四个角。")
+        self.detection_ready = False
+        self.export_button.configure(state="disabled")
+        self.status.set("图片已加载。请点击“自动定位画布”，专业参数已按正式版固定。")
         self.redraw()
 
     def ensure_model(self):
@@ -674,7 +665,7 @@ class SmartCropper(tk.Tk):
             if best is None or score > best[0]:
                 best = (score, label, confidence, x1, y1, x2, y2)
         if best is None:
-            self.status.set("没有得到可信定位，请直接拖动四个角框选画面。")
+            self.status.set("自动定位未通过质量检查；该图片不会按错误区域导出。")
             return
         _, label, confidence, x1, y1, x2, y2 = best
         padding_x, padding_y = (x2 - x1) * 0.018, (y2 - y1) * 0.018
@@ -687,7 +678,7 @@ class SmartCropper(tk.Tk):
         mode = "已精细贴合边缘" if refined is not None else "已给出初始边界"
         self.status.set(
             f"已自动定位为“{label}”（置信度 {confidence:.0%}），{mode}；当前推理：{self.compute_label}。"
-            "请检查绿色四角，必要时拖动微调。"
+            "边缘与透视参数已自动固定，无需手动微调。"
         )
         self.redraw()
 
@@ -705,14 +696,8 @@ class SmartCropper(tk.Tk):
         self.image_canvas.create_image(offset_x, offset_y, image=self.canvas_photo, anchor="nw")
         display = self.corners * scale + np.array([offset_x, offset_y], dtype=np.float32)
         self.image_canvas.create_line(*display.flatten(), *display[0], fill="#14b8a6", width=3, smooth=True)
-        for index, (x, y) in enumerate(display):
-            self.image_canvas.create_oval(x - 8, y - 8, x + 8, y + 8, fill="#14b8a6", outline="white", width=2, tags=(f"corner-{index}",))
         self.raw_preview = warp(self.original, self.corners)
-        try:
-            trim_percent = float(self.edge_trim.get())
-        except tk.TclError:
-            trim_percent = 0.8
-        self.preview = clean_edges(self.raw_preview, float(np.clip(trim_percent, 0, 10)))
+        self.preview = clean_edges(self.raw_preview, EDGE_TRIM_PERCENT)
         try:
             ratio = parse_aspect_ratio(self.aspect_ratio.get())
         except ValueError:
@@ -731,28 +716,6 @@ class SmartCropper(tk.Tk):
         ratio = w / h
         direction = "横图" if ratio >= 1 else "竖图"
         self.result_info.set(f"{direction}  ·  {w} × {h} px  ·  宽高比 {ratio:.4f}")
-
-    def canvas_to_image(self, x: int, y: int) -> np.ndarray:
-        offset_x, offset_y = self.display_offset
-        point = np.array([(x - offset_x) / self.display_scale, (y - offset_y) / self.display_scale])
-        assert self.original is not None
-        h, w = self.original.shape[:2]
-        return np.clip(point, [0, 0], [w - 1, h - 1])
-
-    def on_pointer_down(self, event: tk.Event) -> None:
-        if self.corners is None:
-            return
-        display = self.corners * self.display_scale + np.array(self.display_offset, dtype=np.float32)
-        distances = np.linalg.norm(display - np.array([event.x, event.y]), axis=1)
-        nearest = int(np.argmin(distances))
-        if distances[nearest] <= 26:
-            self.active_corner = nearest
-
-    def on_pointer_move(self, event: tk.Event) -> None:
-        if self.active_corner is None or self.corners is None:
-            return
-        self.corners[self.active_corner] = self.canvas_to_image(event.x, event.y)
-        self.redraw()
 
     def _best_canvas_box(self, result, width: int, height: int):
         candidates = []
@@ -2102,6 +2065,7 @@ class SmartCropper(tk.Tk):
             return
 
         image = self.original.copy()
+        self.detection_ready = False
         self._set_processing(True)
         self.status.set(f"正在后台自动定位画布，推理设备：{self.compute_label}…")
         LOGGER.info("auto_locate_started shape=%s compute=%s", image.shape, self.compute_label)
@@ -2127,15 +2091,18 @@ class SmartCropper(tk.Tk):
             self._post_ui("auto_error", str(error))
 
     def _handle_auto_done(self, payload: object) -> None:
-        self._finish_processing()
         details = payload if isinstance(payload, dict) else {}
         found = details.get("found")
         self.last_detection_mode = str(details.get("mode", ""))
         self.last_detection_review_reason = str(details.get("review", ""))
         if found is None:
-            self.status.set("没有得到可信定位，请直接拖动四个角框选画面。")
+            self.detection_ready = False
+            self._finish_processing()
+            self.status.set("自动定位未通过质量检查；该图片不会按错误区域导出。")
             return
         self.corners, label, confidence, refined = found
+        self.detection_ready = True
+        self._finish_processing()
         mode = self.last_detection_mode or ("已精细贴合边缘" if refined else "已给出初始边框")
         review = (
             f" 自动结果需要复核：{self.last_detection_review_reason}。"
@@ -2143,7 +2110,7 @@ class SmartCropper(tk.Tk):
         )
         self.status.set(
             f"已自动定位为“{label}”（置信度 {confidence:.0%}），{mode}；当前推理：{self.compute_label}。"
-            f"{review}请检查绿色四角，必要时拖动微调。"
+            f"{review}边缘与透视参数已自动固定，无需手动微调。"
         )
         LOGGER.info(
             "auto_locate_completed label=%s confidence=%.4f refined=%s compute=%s review=%s",
@@ -2186,11 +2153,6 @@ class SmartCropper(tk.Tk):
         ):
             return
         try:
-            trim_percent = float(self.edge_trim.get())
-        except (tk.TclError, ValueError):
-            trim_percent = 0.8
-        trim_percent = float(np.clip(trim_percent, 0, 10))
-        try:
             aspect_ratio = parse_aspect_ratio(self.aspect_ratio.get())
         except ValueError as error:
             messagebox.showerror("输出比例无效", str(error))
@@ -2210,7 +2172,7 @@ class SmartCropper(tk.Tk):
         )
         worker = threading.Thread(
             target=self._batch_worker,
-            args=(input_dir, images, output_dir, trim_percent, aspect_ratio, ratio_label),
+            args=(input_dir, images, output_dir, aspect_ratio, ratio_label),
             name="batch-inference",
             daemon=True,
         )
@@ -2221,7 +2183,6 @@ class SmartCropper(tk.Tk):
         input_dir: Path,
         images: list[Path],
         output_dir: Path,
-        trim_percent: float,
         aspect_ratio: float | None,
         ratio_label: str,
     ) -> None:
@@ -2261,7 +2222,7 @@ class SmartCropper(tk.Tk):
                     records.append([str(relative), "需要复核", reason, "", "", ""])
                     continue
                 corners, label, confidence, refined = found
-                crop = clean_edges(warp(image, corners), trim_percent)
+                crop = clean_edges(warp(image, corners), EDGE_TRIM_PERCENT)
                 crop = crop_to_aspect(crop, aspect_ratio)
                 height, width = crop.shape[:2]
                 relative = source.relative_to(input_dir)
@@ -2377,7 +2338,7 @@ def run_self_test(input_path: str, output_path: str) -> int:
             print(f"detection_review={app.last_detection_review_reason}")
             return 3
         corners, label, confidence, refined = found
-        result = clean_edges(warp(image, corners), 0.8)
+        result = clean_edges(warp(image, corners), EDGE_TRIM_PERCENT)
         written, write_error = write_image_file(output_path, result)
         if not written:
             print(f"write_error={write_error}")

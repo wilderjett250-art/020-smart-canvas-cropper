@@ -18,8 +18,8 @@ namespace SmartCanvasCropperLauncher
 {
     internal static class AppConfig
     {
-        internal const string ProductVersion = "1.8.1";
-        internal const string RuntimeSchema = "portable-py3119-cuda271-dml241-cpu271-ultralytics8437-r5";
+        internal const string ProductVersion = "1.9.2";
+        internal const string RuntimeSchema = "portable-py3119-cuda271-dml241-cpu271-ultralytics8437-r6";
         internal const string PrimaryDetectorSha256 = "946E70DE8D586E84F1BB98CAAB8C094E3A8CF501E4807888166299439A67CBA3";
         internal const string RecoveryDetectorSha256 = "9915A40C0AF95E45B38FAB9A20678E7A089914959205239A713A34958599455B";
         internal const string SegmenterSha256 = "6DBB90523A35330FEDD7F1D3DFC66F995213D81B29A5CA8108DBCDD4E37D6C2F";
@@ -38,7 +38,7 @@ namespace SmartCanvasCropperLauncher
             return Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "SmartCanvasCropper",
-                "v1.8");
+                "v1.9.2");
         }
     }
 
@@ -678,10 +678,13 @@ namespace SmartCanvasCropperLauncher
             {
                 code = "import os,sys,torch,cv2,PIL,ultralytics; " +
                     "os.environ['SMART_CROPPER_RUNTIME_MODE']='nvidia'; " + modelProbe +
+                    "d,label=app.choose_compute_device(); tensor_device='cuda:0' if d==0 else d; " +
+                    "v=torch.ones(1).to(tensor_device).cpu(); " +
                     "print('python='+sys.version.split()[0]); print('torch='+torch.__version__); " +
-                    "print('cuda='+str(torch.cuda.is_available())); print('opencv='+cv2.__version__); " +
+                    "print('device='+str(tensor_device)); print('label='+label); print('cuda='+str(torch.cuda.is_available())); " +
+                    "print('opencv='+cv2.__version__); " +
                     "print('ultralytics='+ultralytics.__version__); " +
-                    "raise SystemExit(0 if torch.cuda.is_available() else 3)";
+                    "raise SystemExit(0 if str(tensor_device).startswith('cuda') and torch.cuda.is_available() and float(v[0])==1.0 else 3)";
             }
             else if (mode == "directml")
             {
