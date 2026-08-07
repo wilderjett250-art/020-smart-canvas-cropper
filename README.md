@@ -1,8 +1,8 @@
-# SmartCanvasCropper
+# SmartCanvasCropper v1.9.2
 
-一个面向 Windows 的智能画布裁图工具。它先用 YOLO-World 定位画布、海报或墙面作品，再用 MobileSAM 细化边缘，最后完成透视校正和批量裁剪。
+一个面向 Windows 的智能画布裁图工具。它用 YOLO-World 定位画布、海报或墙面作品，用 MobileSAM 细化边缘，再完成透视校正和批量裁剪。v1.9.2 将边缘净化、分割排序和几何校正参数固定为正式版策略，用户选择图片后即可直接得到结果。
 
-SmartCanvasCropper is a Windows image utility that detects canvases, posters, framed pictures, and wall art, refines their boundaries, applies perspective correction, and exports clean crops in batches.
+SmartCanvasCropper is a Windows image utility that detects canvases, posters, framed pictures, and wall art, refines their boundaries, applies perspective correction, and exports clean crops in batches. Version 1.9.2 uses a locked production geometry pipeline so users do not need to tune expert parameters.
 
 ## 主要能力 | Features
 
@@ -13,7 +13,8 @@ SmartCanvasCropper is a Windows image utility that detects canvases, posters, fr
 - 保持原比例或指定宽高比 | Preserve the original ratio or choose an aspect ratio
 - 中文路径和 Windows 10/11 | Chinese paths and Windows 10/11
 - NVIDIA CUDA、AMD/Intel DirectML、CPU 三种运行路线 | NVIDIA CUDA, AMD/Intel DirectML, and CPU modes
-- 后台推理线程，界面保持响应 | Background inference workers keep the UI responsive
+- 固定的边缘净化、分割排序和几何参数 | Locked edge, segmentation, and geometry parameters
+- 低置信度图片进入复核目录，并写入 CSV 原因 | Low-confidence images are routed to review with CSV reasons
 
 ## 快速运行 | Quick start
 
@@ -25,14 +26,15 @@ python -m venv .venv
 .\.venv\Scripts\python.exe .\smart_canvas_cropper.py
 ```
 
-运行后选择一张图片或一个文件夹，工具会输出带有 `_裁图` 后缀的结果文件。
+运行后选择一张图片或一个文件夹，工具会输出带有 `_裁图` 后缀的结果文件，不覆盖原图。
 
 ## 项目结构 | Project layout
 
 ```text
-smart_canvas_cropper.py              主程序：检测、分割、透视校正和界面
+smart_canvas_cropper.py              v1.9.2 主程序
 models/                              三个推理模型
 universal_launcher/                  Windows 启动器和环境检查脚本源码
+scripts/build_final_v192.ps1         Windows 正式发布包构建脚本
 docs/MODEL_SHA256.txt                模型完整性校验
 requirements.txt                     CPU/NVIDIA 基础依赖
 requirements-directml.txt            AMD/Intel DirectML 可选依赖
@@ -50,12 +52,12 @@ requirements-directml.txt            AMD/Intel DirectML 可选依赖
 
 ## 运行路线 | Runtime modes
 
-- `auto`：优先使用可用的 NVIDIA CUDA，其次尝试 DirectML，最后使用 CPU。
+- `auto`：优先使用 NVIDIA CUDA，其次尝试 DirectML，最后使用 CPU。
 - `nvidia`：适合安装 CUDA 版 PyTorch 的 NVIDIA 电脑。
 - `directml`：适合 AMD 或 Intel GPU，需要额外安装 `requirements-directml.txt`。
-- `cpu`：适合没有可用 GPU 的电脑，速度较慢但流程一致。
+- `cpu`：适合没有可用 GPU 的电脑，首次加载和批量处理速度低于 GPU。
 
-便携 Python、完整依赖和双击启动 EXE 属于发布包，不放入源码仓库。这样仓库保持适合阅读和二次开发，普通用户版本可以通过 GitHub Releases 获取。
+Windows 发布包还提供 `doctor`、`prepare`、`run` 和 `prepare-run` 四种命令行动作。便携 Python、完整依赖和双击启动 EXE 属于 Release 发布物，不放入源码仓库。
 
 ## 许可证与第三方组件 | Licensing
 
@@ -63,4 +65,4 @@ requirements-directml.txt            AMD/Intel DirectML 可选依赖
 
 ## English summary
 
-SmartCanvasCropper turns a photo of a canvas or poster into a clean, corrected crop. The pipeline combines open-vocabulary detection, segmentation, geometry refinement, and batch export. The repository contains the application source, launcher source, model weights, checksums, and dependency definitions; bundled Python runtimes and generated experiment folders are kept out of the source tree.
+SmartCanvasCropper v1.9.2 turns a photo of a canvas or poster into a clean, corrected crop. The pipeline combines open-vocabulary detection, segmentation, geometry refinement, and batch export. The repository contains the updated application source, Windows launcher source, verified model weights, checksums, and dependency definitions. Bundled Python runtimes and generated experiment folders are kept out of the source tree.

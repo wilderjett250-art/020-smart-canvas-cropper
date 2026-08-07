@@ -1,4 +1,4 @@
-SmartCanvasCropper v1.8.1 model checksums
+SmartCanvasCropper v1.9.2 model checksums
 
 946E70DE8D586E84F1BB98CAAB8C094E3A8CF501E4807888166299439A67CBA3  models/yolov8l-worldv2-canvas.pt
 9915A40C0AF95E45B38FAB9A20678E7A089914959205239A713A34958599455B  models/yolov8s-worldv2-canvas.pt
